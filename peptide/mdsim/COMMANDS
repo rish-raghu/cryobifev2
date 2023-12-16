@@ -1,0 +1,34 @@
+# choose force fields
+gmx_gpu pdb2gmx -f peptide.pdb -o peptide.gro -water tip3p -ff amber99sb-ildn &>> pdb2gmx.txt
+
+# define simulation cell
+gmx_gpu editconf -f peptide.gro -o peptide_box.gro -c -d 2.0 -bt cubic &>> editconf.txt
+
+# add water solvent
+gmx_gpu solvate -cp peptide_box.gro -cs spc216.gro -o peptide_solv.gro -p topol.top &>> solvate.txt
+
+# energy minimization
+gmx_gpu grompp -f em.mdp -c peptide_solv.gro -p topol.top -o em.tpr
+sbatch em.slurm
+printf "Potential\n0\n" | gmx_gpu energy -f em.edr -o empot.xvg -xvg none
+python plot_empot.py
+
+# temperature equilibration
+gmx_gpu grompp -f tempeq.mdp -c em.gro -r em.gro -p topol.top -o tempeq.tpr
+sbatch tempeq.slurm
+echo "Temperature" | gmx_gpu energy -f tempeq.edr -o eqtemp.xvg -xvg none -b 20
+python plot_eqtemp.py
+
+# pressure equilibration
+gmx_gpu grompp -f preseq.mdp -c tempeq.gro -r tempeq.gro -t tempeq.cpt -p topol.top -o preseq.tpr
+sbatch preseq.slurm
+echo "Pressure" | gmx_gpu energy -f preseq.edr -o eqpres.xvg -xvg none
+python plot_eqpres.py
+echo "Density" | gmx_gpu energy -f preseq.edr -o eqdensity.xvg -xvg none
+python plot_eqdensity.py
+
+# production run
+gmx_gpu grompp -f prod.mdp -c preseq.gro -t preseq.cpt -p topol.top -o prod.tpr
+sbatch prod.slurm
+printf "1\n1\n" | gmx_gpu trjconv -s prod.tpr -f prod.xtc -o prod_center.xtc -center -pbc mol # corresponding structure is peptide_box.gro
+printf "1\n1\n" | gmx_gpu trjconv -s prod.tpr -f prod_center.xtc -o prod_align.xtc -fit rot+trans

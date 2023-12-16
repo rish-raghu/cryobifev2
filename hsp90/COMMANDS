@@ -1,0 +1,28 @@
+sbatch -p cryoem -t 1:00:00 --mem=128G --gres=gpu:1 -J csim --wrap "python ../generate_projections.py volumes true.csv 10000 -o images/raw"
+sbatch -p cryoem -t 1:00:00 --mem=128G --gres=gpu:1 -J csim --wrap "python ../add_ctf.py images/raw 1.55 --df-std 1000 -o images/ctf" # with defocus variation
+sbatch -p cryoem -t 1:00:00 --mem=128G --gres=gpu:1 -J csim --wrap "python ../image_sim/add_ctf.py images/raw 1.55 -o images/ctf"
+sbatch -p cryoem -t 1:00:00 --mem=128G --gres=gpu:1 -J csim --wrap "python ../image_sim/add_noise.py images/ctf 0.1 -o images/snr0.1"
+sbatch -p cryoem -t 0:10:00 --mem=64G --gres=gpu:1 -J csim --wrap "cryodrgn backproject_voxel images/snr0.1/images_15.mrcs --poses images/raw/poses_15.pkl --ctf images/ctf/ctf_15.pkl --uninvert-data -o images/backproj_15.mrc"
+python ../image_sim/make_txt.py images/snr0.1/ -o images/snr0.1/images.txt
+sbatch -p cryoem -t 1:00:00 --mem=64G --gres=gpu:1 -J csim --wrap "cryodrgn downsample images/snr0.1/images.txt -D 128 -o images/snr0.1/images.128.mrcs"
+sbatch -p cryoem -t 1:00:00 --mem=64G --gres=gpu:1 -J csim --wrap "cryodrgn downsample images/snr0.1/images.txt -D 160 -o images/snr0.1/images.mrcs"
+cryodrgn_utils view_mrcs images/snr0.1/images.128.mrc -o images/snr0.1/sample.128.png
+for i in *mrc; do cryodrgn downsample $i -D 128 -o 128/${i}; done
+
+export GPU=1
+export BIOEM_DEBUG_OUTPUT=1
+../BioEM/bioEM --Inputfile bioem/CONFIG --Modelfile volumes/volume_1.mrc --ReadModelMRC --Particlesfile images/raw/images_1.mrcs --ReadMRC --ReadOrientation ../BioEM/Quaternions/QUATERNION_LIST_576_Orient --OutputFile bioem/prob_1
+../BioEM/bioEM --Inputfile bioem/CONFIG --Modelfile rotated_pdbs/angle_1.pdb --ReadPDB --Particlesfile images/ctf/images_1.mrcs --ReadMRC --ReadOrientation ../BioEM/Quaternions/QUATERNION_LIST_4608_Orient --OutputFile bioem/prob_1
+
+sbatch -p cryoem -t 0:05:00 --mem=64G --gres=gpu:1 -J bioem --wrap "for i in {1..20} do echo ../BioEM/bioEM --Inputfile bioem/CONFIG --Modelfile rotated_pdbs/angle_$i.pdb --ReadPDB --Particlesfile images/ctf/images_1.mrcs --ReadMRC --ReadOrientation ../BioEM/Quaternions/QUATERNION_LIST_4608_Orient --OutputFile bioem/ctf_1/prob_$i; done"
+python ../plot_probs.py bioem/ctf_1_large/ 15
+
+python ../parse_probs.py bioem/snr_all_med/ 9999
+
+cryodrgn_utils select_random 250 -n 10 -o images/ctf/subset10_11.pkl
+cryodrgn_utils filter_mrcs images/ctf/images_11.mrcs --ind images/ctf/subset10_11.pkl -o images/ctf/subset10_11.mrcs
+
+python ../parse_probs.py bioem/ctf_all_med_v2/ 9999
+sbatch -p cryoem -t 1:00:00 --mem=32G -J mcmc --wrap "python ../mcmc/mcmc.py bioem/ctf_all_med_v2/prob.npy 200000 -o bioem/ctf_all_med_v2"
+python ../mcmc/plot_fesprob.py bioem/ctf_all_med_v2 --start 400
+python ../mcmc/plot_fes.py bioem/ctf_all_med_v2 --start 1000

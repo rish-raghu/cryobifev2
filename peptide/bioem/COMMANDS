@@ -1,0 +1,11 @@
+../../BioEM/bioEM --Inputfile CONFIG --Modelfile pdbs/conf_1.pdb --ReadPDB --Particlesfile ../image_sim2/ctf.mrcs --ReadMRC --ReadOrientation ../../BioEM/Quaternions/QUATERNION_LIST_4608_Orient --OutputFile prob_3
+../../BioEM/bioEM --Inputfile CONFIG --Modelfile ../image_sim/vols_pad/frame_9749.mrc --ReadModelMRC --Particlesfile ../image_sim/raw_100.mrcs --ReadMRC --ReadOrientation ../../BioEM/Quaternions/QUATERNION_LIST_4608_Orient --OutputFile prob_1
+cryodrgn_utils select_random 10000 -n 100 -o subset100.pkl
+cryodrgn_utils filter_mrcs ../image_sim/raw.mrcs --ind subset100.pkl -o ../image_sim/raw_100.mrcs
+cryodrgn_utils filter_mrcs ../image_sim/ctf.mrcs --ind subset100.pkl -o ../image_sim/ctf_100.mrcs
+
+sh bioem.sh
+python ../../parse_probs.py raw_all_large 10001
+sbatch -p cryoem -t 1:00:00 --mem=32G -J mcmc --wrap "python ../../mcmc/mcmc.py raw_all_large/prob.npy 200000 -o raw_all_large"
+python ../../mcmc/plot_fesprob.py raw_all_large --start 400
+python ../../mcmc/plot_fes.py raw_all_large 10 --start 1000
